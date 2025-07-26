@@ -1,0 +1,80 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import "@openzeppelin/contracts/access/Ownable.sol";
+
+contract OROPlatform is ERC20("ORO", "ORO"), Ownable {
+    // Data submission structure
+    struct DataSubmission {
+        address submitter;
+        bytes32 zkProof;
+        uint256 dataType;
+        uint256 timestamp;
+        bool isUsed;
+    }
+
+    // Platform parameters
+    uint256 public rewardRate = 100; // ORO tokens per approved submission
+    uint256 public submissionCount;
+    mapping(uint256 => DataSubmission) public submissions;
+    mapping(address => uint256[]) private userSubmissions;
+    
+    // TEE verification addresses (managed by oracles)
+    mapping(address => bool) public teeVerifiers;
+
+    event DataSubmitted(uint256 indexed submissionId, address indexed submitter);
+    event RewardClaimed(address indexed user, uint256 amount);
+
+    constructor() {
+        _mint(msg.sender, 1000000 * 10**decimals()); // Initial supply
+    }
+
+    /**
+     * @dev Submit data with zkProof
+     * @param _zkProof The zero-knowledge proof of data validity
+     * @param _dataType Type of data (1=audio, 2=biometric, etc.)
+     */
+    function submitData(bytes32 _zkProof, uint256 _dataType) external {
+        submissions[submissionCount] = DataSubmission({
+            submitter: msg.sender,
+            zkProof: _zkProof,
+            dataType: _dataType,
+            timestamp: block.timestamp,
+            isUsed: false
+        });
+        
+        userSubmissions[msg.sender].push(submissionCount);
+        emit DataSubmitted(submissionCount, msg.sender);
+        submissionCount++;
+    }
+
+    /**
+     * @dev TEE oracle verifies and approves submission
+     * @param _submissionId ID of the data submission
+     * @param _isValid Verification result from TEE
+     */
+    function verifySubmission(uint256 _submissionId, bool _isValid) external onlyTeeVerifier {
+        require(!submissions[_submissionId].isUsed, "Already processed");
+        
+        if (_isValid) {
+            _mint(submissions[_submissionId].submitter, rewardRate * 10**decimals());
+            submissions[_submissionId].isUsed = true;
+            emit RewardClaimed(submissions[_submissionId].submitter, rewardRate);
+        }
+    }
+
+    // Management functions
+    function addTeeVerifier(address _verifier) external onlyOwner {
+        teeVerifiers[_verifier] = true;
+    }
+
+    function setRewardRate(uint256 _newRate) external onlyOwner {
+        rewardRate = _newRate;
+    }
+
+    modifier onlyTeeVerifier() {
+        require(teeVerifiers[msg.sender], "Not authorized verifier");
+        _;
+    }
+}
